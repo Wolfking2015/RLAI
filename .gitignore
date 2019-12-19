@@ -5,3 +5,4 @@ latex
 extra
 .DS_Store
 .vscode/
+*.png

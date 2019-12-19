@@ -179,7 +179,6 @@ def to_iterator_ray(obj_ids):
         yield ray.get(done[0])   # Return the recent done id, trigger the tdqm progressbar, and continue to wait
 
 def simulate(runs, times, bandits):   # Run stimulations. Return best_action_counts and total rewards. HH
-    
     rewards = np.zeros((len(bandits), runs, times))
     best_action_counts = np.zeros(rewards.shape)
     
@@ -196,38 +195,49 @@ def simulate(runs, times, bandits):   # Run stimulations. Return best_action_cou
                 rewards[i,r], best_action_counts[i,r] = one_run(times, bandit) 
                 
         elif method == 'ray':
-            result_ids = [one_run_ray.remote(times,bandit) for r in range(runs)]
+            
+            bandit_id = ray.put(bandit)
+            result_ids = [one_run_ray.remote(times,bandit_id) for r in range(runs)]
             
             # --- Use tqdm for ray ---
-            for _ in tqdm(to_iterator_ray(result_ids), total=len(result_ids)):
-                pass
+            # Note here tqdm is actully tqdm(module).tqdm(func)
+            # And tqdm is a DECORATOR!!!
+            # for j,x in zip(range(runs), tqdm(to_iterator_ray(result_ids), total=len(result_ids))):
+            #     rewards[i,j], best_action_counts[i,j] = x  # Put it in results. It works!!!
+                # But tdqm is very easy to get bugged...
             
             # --- Manual progress_bar for ray ---
             # Use result_ids ("future") to refer each ray.remote
-            # len_finished = 0
+            len_finished = 0
             
-            # while result_ids: 
-            #     len_finished +=1
-            #     done_id, result_ids = ray.wait(result_ids)   # Once anyone is done. Note that done_id here has only one object because result_ids is shrinking.
-            #     rewards[i,len_finished-1], best_action_counts[i,len_finished-1] = ray.get(done_id[0])  # Put it in results
-            #     aver_speed = len_finished / (time.time() - start)                                
-            #     print('\r', '%g / %g, Aver: %.2f iters/s' % (len_finished, runs, aver_speed), end='')  # Print progress
+            while result_ids: 
+                len_finished +=1
+                done_id, result_ids = ray.wait(result_ids)   # Once anyone is done. Note that done_id here has only one object because result_ids is shrinking.
+                rewards[i,len_finished-1], best_action_counts[i,len_finished-1] = ray.get(done_id[0])  # Put it in results
+                aver_speed = len_finished / (time.time() - start)                                
+                print('\r', '%g / %g, Aver: %.2f iters/s' % (len_finished, runs, aver_speed), end='')  # Print progress
             
         elif method == 'apply_sync':
             result_ids = [pool.apply_async(one_run, args=(times, bandit)) for r in range(runs)]
             result_ids = [p.get() for p in result_ids]
-
 
             
         print('\nModel %g: %s finished in %g s' % (i+1, method,time.time()-start))
                     
     # Calculate mean_best_action_counts and reward. HH
     #???                
-    mean_rewards = rewards.mean(axis = 1)  # Average over runs (2nd dimension) HH
-    mean_best_action_counts = best_action_counts.mean(axis = 1)
+    # Average over runs (2nd dimension) HH
+    rewards_mean_sem = [rewards.mean(axis = 1),
+                        rewards.std(axis=1) / np.sqrt(np.size(rewards, axis=1))]
+    
+    best_action_counts_mean_sem = [best_action_counts.mean(axis = 1),
+                                   best_action_counts.std(axis=1) / np.sqrt(np.size(best_action_counts, axis=1))]
     #???
     
-    return mean_best_action_counts, mean_rewards
+    rewards_mean_sem = np.swapaxes(rewards_mean_sem, 0, 1)
+    best_action_counts_mean_sem = np.swapaxes(best_action_counts_mean_sem, 0, 1)
+    
+    return best_action_counts_mean_sem, rewards_mean_sem
 
 
 def figure_2_1():
@@ -256,13 +266,15 @@ def figure_2_2(runs=2000, time=1000):
     #???
 
     plt.figure(figsize=(10, 20))
-
+    plt.clf
     plt.subplot(2, 1, 1)
     
     # Plotting average rewards. Use zip(epsilons, rewards), and plt.plot(rewards, label = 'xxx %X %X' %(X,X))
     #???
+    
     for eps, rew in zip(epsilons, rewards):
-        plt.plot(rew, label = 'epsilon = %2g' %eps)
+        h = plt.plot(rew[0], label = 'epsilon = %2g' %eps)
+        plt.fill_between(np.arange(0,time), rew[0] - rew[1], rew[0] + rew[1], alpha = 0.2, color = h[0].get_color())
     #???
     
     plt.xlabel('steps')
@@ -274,7 +286,9 @@ def figure_2_2(runs=2000, time=1000):
     # Plotting % best actions
     #???
     for eps, best_action in zip(epsilons, best_action):
-        plt.plot(best_action, label = 'epsilon = %2g' %eps)
+        h = plt.plot(best_action[0], label = 'epsilonl = %2g' %eps)
+        plt.fill_between(np.arange(0,time), best_action[0] - best_action[1], \
+                         best_action[0] + best_action[1], alpha = 0.2, color = h[0].get_color())
     
     #???    
     
@@ -296,13 +310,16 @@ def figure_2_3(runs=2000, time=1000):
     #???
     epsilons = [0, 0, 0.1, 0.1]
     q_inits = [0, 5, 0, 5]
+    
     bandits = [Bandit(epsilon = eps, initial = init, sample_averages = False)\
                for eps, init in zip(epsilons, q_inits)]
     
     best_action, _ = simulate(runs, time, bandits)
     
     for eps, init, best_action in zip(epsilons, q_inits, best_action):
-        plt.plot(best_action, label = 'epsilon = %2g, Q_init = %2g' % (eps, init))
+        h = plt.plot(best_action[0], label = 'epsilon = %2g, Q_init = %2g' % (eps, init))
+        plt.fill_between(np.arange(0,time), best_action[0] - best_action[1], best_action[0] + best_action[1], alpha = 0.2, color = h[0].get_color())
+
     #???
     
     plt.xlabel('Steps')
@@ -327,9 +344,13 @@ def figure_2_4(runs=2000, time=1000):
     
     _, aver_rewards = simulate(runs, time, bandits)
     
-    plt.plot(aver_rewards[0], label = 'epsi = 0,   UCB = 2')
-    plt.plot(aver_rewards[1], label = 'epsi = 0.1, UCB = 0')
+    txt = ['epsi = 0,   UCB = 2', 'epsi = 0.1, UCB = 0']
     
+    for j, rew in enumerate(aver_rewards):
+        h = plt.plot(rew[0], label = txt[j])
+        plt.fill_between(np.arange(0,time), rew[0] - rew[1], rew[0] + rew[1], alpha = 0.2, color = h[0].get_color())
+
+
     #???
     
     plt.xlabel('Steps')
@@ -353,15 +374,20 @@ def figure_2_5(runs=2000, time=1000):
     bandits.append(Bandit(gradient=True, step_size=0.1, gradient_baseline=False, true_reward=4))
     bandits.append(Bandit(gradient=True, step_size=0.4, gradient_baseline=True, true_reward=4))
     bandits.append(Bandit(gradient=True, step_size=0.4, gradient_baseline=False, true_reward=4))
+    
     best_action_counts, _ = simulate(runs, time, bandits)
+    
     labels = ['alpha = 0.1, with baseline',
               'alpha = 0.1, without baseline',
               'alpha = 0.4, with baseline',
               'alpha = 0.4, without baseline']
 
     for i in range(len(bandits)):
-        plt.plot(best_action_counts[i], label=labels[i])
-    
+        h = plt.plot(best_action_counts[i][0], label=labels[i])
+        plt.fill_between(np.arange(0,time), best_action_counts[i][0] - best_action_counts[i][1], \
+                         best_action_counts[i][0] + best_action_counts[i][1], \
+                         alpha = 0.2, color = h[0].get_color())
+
     #???
         
     plt.xlabel('Steps')
@@ -404,7 +430,9 @@ def figure_2_6(runs=2000, time=1000):
     # Run simulation. Get rewards.
     #???
     _, aver_rewards = simulate(runs, time, bandits)
-    rewards_each_paras = np.mean(aver_rewards, axis=1)
+    
+    rewards_each_paras = np.mean(aver_rewards[:,0,:], axis=1)
+    rewards_each_paras_sem = np.mean(aver_rewards[:,1,:], axis=1)
     #???
         
     # Plot curves. Use for loop
@@ -412,9 +440,9 @@ def figure_2_6(runs=2000, time=1000):
     i = 0
     for label, parameter in zip(labels, parameters):
         len_this = len(parameter)
-        
         # Open upper limit: [i, i+len_this) !!!
-        plt.plot(parameter, rewards_each_paras[i:i+len_this], label=label)
+        plt.errorbar(parameter, rewards_each_paras[i:i+len_this], rewards_each_paras_sem[i:i+len_this], label=label)
+        
         i += len_this
     #???
     
@@ -449,11 +477,11 @@ if __name__ == '__main__':
         
     
 #    figure_2_1()
-    figure_2_2(2000, 2000)
+    # figure_2_2(2000, 2000)
 #    figure_2_3(2000,2000)
-#    figure_2_4(2000,2000)
-#    figure_2_5(500,1000)
-    # figure_2_6(2000,1000)
+    # figure_2_4(2000,2000)
+    # figure_2_5(2000,2000)
+    figure_2_6(2000, 1000)
     
     exercise_2_5()
     exercise_2_11()
