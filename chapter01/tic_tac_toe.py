@@ -10,6 +10,7 @@
 
 import numpy as np
 import pickle
+import time
 
 BOARD_ROWS = 3
 BOARD_COLS = 3
@@ -23,7 +24,7 @@ class State:
         # -1 represents a chessman of another player
         # 0 represents an empty position
         self.data = np.zeros((BOARD_ROWS, BOARD_COLS))
-        self.winner = None
+        self.winner = None 
         self.hash_val = None
         self.end = None
 
@@ -32,7 +33,7 @@ class State:
         if self.hash_val is None:
             self.hash_val = 0
             for i in np.nditer(self.data):
-                self.hash_val = self.hash_val * 3 + i + 1
+                self.hash_val = self.hash_val * 3 + (i + 1)   # HH: Equivalent to the ternary numeral system
         return self.hash_val
 
     # check whether a player has won the game, or it's a tie
@@ -46,7 +47,7 @@ class State:
         # check columns
         for i in range(BOARD_COLS):
             results.append(np.sum(self.data[:, i]))
-
+            
         # check diagonals
         trace = 0
         reverse_trace = 0
@@ -102,7 +103,7 @@ class State:
         print('-------------')
 
 
-def get_all_states_impl(current_state, current_symbol, all_states):
+def get_all_states_impl(current_state, current_symbol, all_states):    # HH: Generate all states by playing (ignore symmetry)
     for i in range(BOARD_ROWS):
         for j in range(BOARD_COLS):
             if current_state.data[i][j] == 0:
@@ -110,16 +111,17 @@ def get_all_states_impl(current_state, current_symbol, all_states):
                 new_hash = new_state.hash()
                 if new_hash not in all_states:
                     is_end = new_state.is_end()
-                    all_states[new_hash] = (new_state, is_end)
+                    all_states[new_hash] = (new_state, is_end)       #HH The argument "all_states" is "mutable object" and thus could be modified
+                                                                     # http://winterttr.me/2015/10/24/python-passing-arguments-as-value-or-reference/
                     if not is_end:
                         get_all_states_impl(new_state, -current_symbol, all_states)
 
 
 def get_all_states():
     current_symbol = 1
-    current_state = State()
-    all_states = dict()
-    all_states[current_state.hash()] = (current_state, current_state.is_end())
+    current_state = State()   #HH Create a new instance for the class State()
+    all_states = dict()       #HH Create a new dictionary
+    all_states[current_state.hash()] = (current_state, current_state.is_end())   #HH all_state[hash] 
     get_all_states_impl(current_state, current_symbol, all_states)
     return all_states
 
@@ -128,7 +130,7 @@ def get_all_states():
 all_states = get_all_states()
 
 
-class Judger:
+class Judger:   # Who organizes a round of game. @HH
     # @player1: the player who will move first, its chessman will be 1
     # @player2: another player with a chessman -1
     def __init__(self, player1, player2):
@@ -145,9 +147,9 @@ class Judger:
         self.p1.reset()
         self.p2.reset()
 
-    def alternate(self):
+    def alternate(self):     # A "generator" function @HH
         while True:
-            yield self.p1
+            yield self.p1    # "Yield" sends back value but enable the function to continue. @HH
             yield self.p2
 
     # @print_state: if True, print each board during the game
@@ -162,6 +164,10 @@ class Judger:
         while True:
             player = next(alternator)
             i, j, symbol = player.act()
+            
+            if i >= BOARD_ROWS:  # The key 'v' abort the game. @HH
+                return 999
+            
             next_state_hash = current_state.next_state(i, j, symbol).hash()
             current_state, is_end = all_states[next_state_hash]
             self.p1.set_state(current_state)
@@ -180,7 +186,7 @@ class Player:
         self.estimations = dict()
         self.step_size = step_size
         self.epsilon = epsilon
-        self.states = []
+        self.states = [] 
         self.greedy = []
         self.symbol = 0
 
@@ -189,7 +195,7 @@ class Player:
         self.greedy = []
 
     def set_state(self, state):
-        self.states.append(state)
+        self.states.append(state)    # Append state to the cache
         self.greedy.append(True)
 
     def set_symbol(self, symbol):
@@ -211,7 +217,8 @@ class Player:
     def backup(self):
         states = [state.hash() for state in self.states]
 
-        for i in reversed(range(len(states) - 1)):
+        # Backprop  @HH
+        for i in reversed(range(len(states) - 1)):    
             state = states[i]
             td_error = self.greedy[i] * (
                 self.estimations[states[i + 1]] - self.estimations[state]
@@ -220,6 +227,8 @@ class Player:
 
     # choose an action based on the state
     def act(self):
+        
+        # Find all possible next states @HH
         state = self.states[-1]
         next_states = []
         next_positions = []
@@ -230,12 +239,14 @@ class Player:
                     next_states.append(state.next_state(
                         i, j, self.symbol).hash())
 
+        # Exploration by random move
         if np.random.rand() < self.epsilon:
             action = next_positions[np.random.randint(len(next_positions))]
             action.append(self.symbol)
             self.greedy[-1] = False
             return action
 
+        # Or exploitation by selecting the most valuable state
         values = []
         for hash_val, pos in zip(next_states, next_positions):
             values.append((self.estimations[hash_val], pos))
@@ -263,7 +274,7 @@ class Player:
 class HumanPlayer:
     def __init__(self, **kwargs):
         self.symbol = None
-        self.keys = ['q', 'w', 'e', 'a', 's', 'd', 'z', 'x', 'c']
+        self.keys = ['q', 'w', 'e', 'a', 's', 'd', 'z', 'x', 'c','v']
         self.state = None
 
     def reset(self):
@@ -291,15 +302,22 @@ def train(epochs, print_every_n=500):
     player1_win = 0.0
     player2_win = 0.0
     for i in range(1, epochs + 1):
+        
+        # 左右互搏 @HH
+        # Player 1 moves the first, so it wins more at the beginning of the training.
         winner = judger.play(print_state=False)
+        
         if winner == 1:
             player1_win += 1
         if winner == -1:
             player2_win += 1
         if i % print_every_n == 0:
             print('Epoch %d, player 1 winrate: %.02f, player 2 winrate: %.02f' % (i, player1_win / i, player2_win / i))
+        
+        # Note that here we update policy of both player1 and player 2 @HH
         player1.backup()
         player2.backup()
+        
         judger.reset()
     player1.save_policy()
     player2.save_policy()
@@ -336,11 +354,18 @@ def play():
             print("You lose!")
         elif winner == player1.symbol:
             print("You win!")
+        elif winner == 999:
+            print("Bye bye!")
+            return
         else:
             print("It is a tie!")
 
 
 if __name__ == '__main__':
-    train(int(1e5))
+    start = time.time()
+    train(int(5e4))
+    end = time.time()
+    print("Training time:",end-start)
+    
     compete(int(1e3))
     play()
