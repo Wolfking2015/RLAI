@@ -20,6 +20,10 @@ import multiprocessing as mp
 #matplotlib.use('Agg')  # Agg -> non-GUI backend. HH
 # matplotlib.use('qt5agg')  # We can see the figure by qt5. HH
 
+global_runs = 2000
+global_times = 2000  # To cope with the one-argument limitation of map/imap
+
+
 class Bandit:
     # @k_arm: # of arms
     # @epsilon: probability for exploration in epsilon-greedy algorithm
@@ -140,14 +144,14 @@ class Bandit:
         return reward
 
 # Make one-run independent    
-def one_run(time, bandit):
+def one_run(bandit, times=global_times):   # I put "bandit" at the first place because map/imap_xxx only receive one argument.
     
     # Perform one run
     bandit.reset()
-    rewards_this_run = np.zeros(time)
-    best_action_counts_this_run = np.zeros(time)
+    rewards_this_run = np.zeros(times)
+    best_action_counts_this_run = np.zeros(times)
     
-    for t in range(time):
+    for t in range(times):
         
         # act, step
         #???
@@ -160,6 +164,11 @@ def one_run(time, bandit):
         rewards_this_run[t]= reward
         best_action_counts_this_run[t] = action == bandit.best_action
         #???
+        
+    '''        
+    # Add a random delay to test the order
+    time.sleep(np.random.rand()/100)
+    '''
     
     return rewards_this_run, best_action_counts_this_run
 
@@ -179,50 +188,130 @@ def to_iterator_ray(obj_ids):
         yield ray.get(done[0])   # Return the recent done id, trigger the tdqm progressbar, and continue to wait
 
 def simulate(runs, times, bandits):   # Run stimulations. Return best_action_counts and total rewards. HH
-    rewards = np.zeros((len(bandits), runs, times))
-    best_action_counts = np.zeros(rewards.shape)
     
-    for i, bandit in enumerate(bandits):
-        
-        # print(' Model %g: eps = %5.2g, init = %5s, Sample-aver = %5s, UCB = %5s, GA = %5s, GA_base = %5s, step_size = %5g '\
-        #       % (i+1, bandit.epsilon, bandit.initial, bandit.sample_averages, bandit.UCB_param, \
-        #          bandit.gradient, bandit.gradient_baseline, bandit.step_size))  # HH
+    # Generate meta_bandits
+    meta_bandits = bandits * runs
+    meta_runs = len(meta_bandits)
+    
+    rewards = np.zeros((meta_runs, times))
+    best_action_counts = np.zeros(rewards.shape)
+
+    
+    # print(' Model %g: eps = %5.2g, init = %5s, Sample-aver = %5s, UCB = %5s, GA = %5s, GA_base = %5s, step_size = %5g '\
+    #       % (i+1, bandit.epsilon, bandit.initial, bandit.sample_averages, bandit.UCB_param, \
+    #          bandit.gradient, bandit.gradient_baseline, bandit.step_size))  # HH
+    
+    '''
+    A good comparison:
+        https://kirk86.github.io/2017/08/python-multiprocessing/        
+    '''
+    
+    if 'serial' in methods:
+    
+        start = time.time()
+        for r,bandit in tqdm(enumerate(meta_bandits),  total = meta_runs, desc='serial'):     # trange: progress bar. HH
+            rewards[r], best_action_counts[r] = one_run(bandit, times) 
+            
+        print('--- serial finished in %g s ---\n' % (time.time()-start))
+            
+    if 'ray' in methods:
         
         start = time.time()
-        if method == 'Serial':
+        #  bandit_id = ray.put(bandit)   # A little improvement. I use meta bandit here, so bandit are not the same
+        #  result_ids = [one_run_ray.remote(bandit_id, times) for r in range(meta_runs)]
+        result_ids = [one_run_ray.remote(bandit, times) for bandit in meta_bandits]
         
-            for r in trange(runs):     # trange: progress bar. HH
-                rewards[i,r], best_action_counts[i,r] = one_run(times, bandit) 
-                
-        elif method == 'ray':
-            
-            bandit_id = ray.put(bandit)
-            result_ids = [one_run_ray.remote(times,bandit_id) for r in range(runs)]
-            
-            # --- Use tqdm for ray ---
-            # Note here tqdm is actully tqdm(module).tqdm(func)
-            # And tqdm is a DECORATOR!!!
-            # for j,x in zip(range(runs), tqdm(to_iterator_ray(result_ids), total=len(result_ids))):
-            #     rewards[i,j], best_action_counts[i,j] = x  # Put it in results. It works!!!
-                # But tdqm is very easy to get bugged...
-            
-            # --- Manual progress_bar for ray ---
-            # Use result_ids ("future") to refer each ray.remote
-            len_finished = 0
-            
-            while result_ids: 
-                len_finished +=1
-                done_id, result_ids = ray.wait(result_ids)   # Once anyone is done. Note that done_id here has only one object because result_ids is shrinking.
-                rewards[i,len_finished-1], best_action_counts[i,len_finished-1] = ray.get(done_id[0])  # Put it in results
-                aver_speed = len_finished / (time.time() - start)                                
-                print('\r', '%g / %g, Aver: %.2f iters/s' % (len_finished, runs, aver_speed), end='')  # Print progress
-            
-        elif method == 'apply_sync':
-            result_ids = [pool.apply_async(one_run, args=(times, bandit)) for r in range(runs)]
-            result_ids = [p.get() for p in result_ids]
+        ''' If you want keep order, you cannot plot progressbar !!! '''
+        # Get results altogether
+        outputs = ray.get(result_ids) 
+        
+        for n, output in enumerate(outputs):
+            rewards[n], best_action_counts[n] = output  # Put it in results
+
+        ''' If use ray.wait(), cannot keep order!!! '''
+        ''' Because Temporally unordered !!! '''
+
+        # --- Use tqdm for ray ---
+        # But tdqm is very easy to get bugged...
+        # Note here tqdm is actully tqdm(module).tqdm(func)
+        # And tqdm is a DECORATOR!!!
+        # for j,x in zip(range(runs), tqdm(to_iterator_ray(result_ids), total=len(result_ids))):
+        #     rewards[i,j], best_action_counts[i,j] = x  # Put it in results. It works!!!
+           
+        
+        # --- Manual progress_bar for ray ---
+        # Use result_ids ("future") to refer each ray.remote
+        
+        # len_finished = 0
+        
+        
+        # while result_ids: 
+        #     len_finished +=1
+        #     done_id, result_ids = ray.wait(result_ids)   # Once anyone is done. Note that done_id here has only one object because result_ids is shrinking.
+        #     # rewards[i,len_finished-1], best_action_counts[i,len_finished-1] = ray.get(done_id[0])  # Put it in results
+        #     rewards[len_finished-1], best_action_counts[len_finished-1] = ray.get(done_id[0])  # Put it in results
+
+        #     aver_speed = len_finished / (time.time() - start)                                
+        #     print('\r', 'ray: %g / %g, Aver = %.2f iters/s' % (len_finished, meta_runs, aver_speed), end='')  # Print progress
+
+        print('\n--- ray finished in %g s ---\n' % (time.time()-start), flush=True)
+
+        
+    if 'apply_async' in methods:    
+        ''' Temporally unordered, but spatially still ordered !!! '''
+        ''' Faster than ray, but unable to do the progress bar'''
+
+        start = time.time()
+       
+        result_ids = [pool.apply_async(one_run, args=(bandit, times)) for bandit in meta_bandits]
+        outputs = [p.get() for p in result_ids]
+        
+        for n, output in enumerate(outputs):
+            rewards[n], best_action_counts[n] = output  # Put it in results
+        print('\n--- apply_async finished in %g s--- \n' % (time.time()-start), flush=True)
+
+
+    if 'map' in methods:    
+        ''' Order is kept'''
+        
+        start = time.time()
+        # all_this_bandits = [bandit for _ in range(runs)]  # To be "chunked"
+        result_ids = pool.map(one_run, meta_bandits, chunksize = 1)   # Chunksize = 1 is fastest.
+        
+        for n, output in enumerate(result_ids):
+            rewards[n], best_action_counts[n] = output  # Put it in results
+        
+        print('\n--- map finished in %g s--- \n' % (time.time()-start), flush=True)
 
             
-        print('\nModel %g: %s finished in %g s' % (i+1, method,time.time()-start))
+    if 'imap' in methods:    
+        ''' Order is kept'''
+        
+        ''' Similar to apply_async, but have the flexibility of processing on-fly'''
+        ''' Seems that this is perfect!!! '''
+        
+        start = time.time()
+        #  all_this_bandits = [bandit for _ in range(runs)]  # To be "chunked"
+        result_ids = pool.imap(one_run, meta_bandits, chunksize = 1)   # Chunksize = 1 is fastest.
+        
+        # Note that only imap_unordered / imap can show this progress bar. (allow getting partial results) !!!
+        for n, output in tqdm(enumerate(result_ids), total = meta_runs, desc='imap'):
+            rewards[n], best_action_counts[n] = output  # Put it in results
+            
+        print('\n--- imap finished in %g s--- \n' % (time.time()-start), flush=True)
+        
+        
+    '''Turn meta_bandits to bandits * runs'''   
+    '''    
+    To keep order, ray cannot use ray.wait() (no progressbar), imap_unordered should be changed to imap!!!
+    '''
+    
+    # Note the axis order
+    rewards = rewards.reshape((runs, len(bandits), -1))
+    rewards = rewards.swapaxes(0,1)
+    
+    best_action_counts = best_action_counts.reshape((runs, len(bandits), -1))
+    best_action_counts = best_action_counts.swapaxes(0,1)
                     
     # Calculate mean_best_action_counts and reward. HH
     #???                
@@ -250,9 +339,9 @@ def figure_2_1():
 
 def figure_2_2(runs=2000, time=1000):
     
-    title_txt = '=== Figure 2.2: Sample-average, different eps ==='
-    print(title_txt)
-    
+    title_txt = '\n=== Figure 2.2: Sample-average, different eps ===\n'
+    print(title_txt, flush = True)
+        
     epsilons = [0, 0.1, 0.01]
     
     # Generate a series of Bandit objects using different eps. HH
@@ -465,23 +554,33 @@ def exercise_2_11():
 
 if __name__ == '__main__':
     
-    # method = 'Serial'
-    method = 'ray'  
-    # method = 'apply_sync'
+ 
+    n_worker = mp.cpu_count()
     
-    if method == 'ray':
+    
+    ''' Only map/imap can keep order!!! '''
+    methods = [
+        'serial',
+        'ray',
+        'apply_async',
+        'map',
+        'imap',
+        ]
+    
+    if 'ray' in methods:
         ray.shutdown()
-        ray.init(num_cpus = 16)
-    elif method == 'apply_sync':
-        pool = mp.Pool(processes = 16)
+        ray.init(num_cpus = n_worker)
+    
+    if any([x in methods for x in ('apply_async','map','imap_unordered','imap')]):
+        pool = mp.Pool(processes = n_worker)
         
     
-#    figure_2_1()
-    # figure_2_2(2000, 2000)
-#    figure_2_3(2000,2000)
-    # figure_2_4(2000,2000)
-    # figure_2_5(2000,2000)
-    figure_2_6(2000, 1000)
+    # figure_2_1
+    # figure_2_2(global_runs, global_times)
+    figure_2_3(global_runs, global_times)
+    # figure_2_4(global_runs,global_times)
+    # figure_2_5(global_runs,global_times)
+    # figure_2_6(global_runs, global_times)
     
     exercise_2_5()
     exercise_2_11()

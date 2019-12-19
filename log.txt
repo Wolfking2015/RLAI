@@ -1,0 +1,5 @@
+Chap02: Add more parallel comparisions + Meta version 
+
+1. Compare serial, ray, apply_async, map, imap more easily
+2. Serialize all bandit*reps to reduce overhead (NOTE the order issue!!!)
+
