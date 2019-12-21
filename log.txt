@@ -1,5 +1,11 @@
-Chap02: Add more parallel comparisions + Meta version 
+Chap02: Exercise 2.5 and 2.11, non-stationary bandit
 
-1. Compare serial, ray, apply_async, map, imap more easily
-2. Serialize all bandit*reps to reduce overhead (NOTE the order issue!!!)
+Added 
+1. Excercise 2.5 and 2.11 (30 mins to run...)
+
+Changed
+1. For non-stationary problem, use a separate update_q() to update the action value for each step
+2. Add progress bar for apply_async !!! So apply_async() is the best !!!!!!
+3. If in Windows, disable all ray() implementations
+
 

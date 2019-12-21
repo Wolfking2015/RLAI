@@ -10,18 +10,25 @@
 
 
 import matplotlib.pyplot as plt
+plt.rcParams.update({'font.size': 22})
+
 import numpy as np
 from tqdm import trange, tqdm  # For progress bar. HH
 
 # For parallel
-import ray, time
+import platform
+
+if platform.system() != 'Windows':
+    import ray
+    
+import time
 import multiprocessing as mp
     
 #matplotlib.use('Agg')  # Agg -> non-GUI backend. HH
 # matplotlib.use('qt5agg')  # We can see the figure by qt5. HH
 
 global_runs = 2000
-global_times = 2000  # To cope with the one-argument limitation of map/imap
+global_times = 1000  # To cope with the one-argument limitation of map/imap
 
 
 class Bandit:
@@ -35,7 +42,7 @@ class Bandit:
     # @gradient_baseline: if True, use average reward as baseline for gradient based bandit algorithm
     
     def __init__(self, k_arm=10, epsilon=0., initial=0., step_size=0.1, sample_averages=False, UCB_param=None,
-                 gradient=False, gradient_baseline=False, true_reward=0.):
+                 gradient=False, gradient_baseline=False, true_reward=0., q_true_update = 'stationary'):
         self.k = k_arm
         self.step_size = step_size
         self.sample_averages = sample_averages
@@ -48,13 +55,18 @@ class Bandit:
         self.true_reward = true_reward   # As a baseline
         self.epsilon = epsilon
         self.initial = initial
+        
+        self.q_true_update = q_true_update # stationary or non-stationary
 
     def reset(self):
         
         # real reward for each action
         # Use np.random.randn(size):
         #???
-        self.q_true = np.random.randn(self.k) + self.true_reward  # q_true for each bandit = noise + baseline
+        if self.q_true_update == 'stationary':
+            self.q_true = np.random.randn(self.k) + self.true_reward  # q_true for each bandit = noise + baseline
+        elif self.q_true_update == 'random_walk':
+            self.q_true = np.zeros(self.k) + self.true_reward # Start from zero (Exercise 2.5 & 2.11)
         #???
         
         # estimation for each action (initial values)
@@ -101,12 +113,34 @@ class Bandit:
         # 4. Else, do hardmax
         return np.random.choice(np.where(self.q_estimation == self.q_estimation.max())[0])#???
 
+
+    # Update action value q_true, if necessary, for a non-stationary problem
+    # It may depedent on action, so I use it as a potential argument
+    def update_q_true(self, action):
+        
+        if self.q_true_update == 'stationary':
+            pass
+        elif self.q_true_update == 'random_walk':
+            self.q_true = self.q_true + np.random.randn(self.k) * 0.01
+            
+        # The best_action should be updated as well
+        self.best_action = np.argmax(self.q_true)
+            
+        return
+
+
     # Update value/preference estimation
     # take an action, update estimation for this action
+
     
     def step(self, action):
+        
+        # Update action value q_true, if necessary, for a non-stationary problem
+        self.update_q_true(action)  
+        
         # generate the reward under N(real reward, 1)
         reward = self.q_true[action] + np.random.randn() #???
+        
         self.time += 1
         self.action_count[action] += 1
         
@@ -142,6 +176,8 @@ class Bandit:
             #???
         
         return reward
+  
+ 
 
 # Make one-run independent    
 def one_run(bandit, times=global_times):   # I put "bandit" at the first place because map/imap_xxx only receive one argument.
@@ -173,8 +209,9 @@ def one_run(bandit, times=global_times):   # I put "bandit" at the first place b
     return rewards_this_run, best_action_counts_this_run
 
 # Make ray task
-    
-one_run_ray = ray.remote(one_run)
+
+if platform.system() != 'Windows':    
+    one_run_ray = ray.remote(one_run)
 # This is actually equvalent to:
 # @ray.remote
 # def one_run_ray(*arg):
@@ -187,8 +224,8 @@ def to_iterator_ray(obj_ids):
         done, obj_ids = ray.wait(obj_ids)
         yield ray.get(done[0])   # Return the recent done id, trigger the tdqm progressbar, and continue to wait
 
-def simulate(runs, times, bandits):   # Run stimulations. Return best_action_counts and total rewards. HH
-    
+def simulate(runs, times, bandits):  
+    '''Run stimulations. Return best_action_counts and total rewards (mean + SEM). HH '''
     # Generate meta_bandits
     meta_bandits = bandits * runs
     meta_runs = len(meta_bandits)
@@ -214,7 +251,7 @@ def simulate(runs, times, bandits):   # Run stimulations. Return best_action_cou
             
         print('--- serial finished in %g s ---\n' % (time.time()-start))
             
-    if 'ray' in methods:
+    if 'ray' in methods and platform.system() != 'Windows':
         
         start = time.time()
         #  bandit_id = ray.put(bandit)   # A little improvement. I use meta bandit here, so bandit are not the same
@@ -259,15 +296,15 @@ def simulate(runs, times, bandits):   # Run stimulations. Return best_action_cou
         
     if 'apply_async' in methods:    
         ''' Temporally unordered, but spatially still ordered !!! '''
-        ''' Faster than ray, but unable to do the progress bar'''
+        ''' Faster than ray, but unable to do the progress bar'''  ''' Nope!! It can also use progress bar!!!'''
 
         start = time.time()
        
         result_ids = [pool.apply_async(one_run, args=(bandit, times)) for bandit in meta_bandits]
-        outputs = [p.get() for p in result_ids]
-        
-        for n, output in enumerate(outputs):
-            rewards[n], best_action_counts[n] = output  # Put it in results
+        # outputs = [p.get() for p in result_ids]
+                
+        for n, result_id in tqdm(enumerate(result_ids), total = meta_runs, desc='apply_async'):
+            rewards[n], best_action_counts[n] = result_id.get()  # Put it in results
         print('\n--- apply_async finished in %g s--- \n' % (time.time()-start), flush=True)
 
 
@@ -330,6 +367,8 @@ def simulate(runs, times, bandits):   # Run stimulations. Return best_action_cou
 
 
 def figure_2_1():
+    
+    plt.figure(figsize=(10, 10))
     plt.violinplot(dataset=np.random.randn(200, 10) + np.random.randn(10))
     plt.xlabel("Action")
     plt.ylabel("Example of Reward distribution")
@@ -337,9 +376,9 @@ def figure_2_1():
 #    plt.close()
 
 
-def figure_2_2(runs=2000, time=1000):
+def figure_2_2(runs=global_runs, times=global_times):
     
-    title_txt = '\n=== Figure 2.2: Sample-average, different eps ===\n'
+    title_txt = '\n=== Figure 2.2: Sample-average \nDifferent eps (%g runs)===\n' % runs
     print(title_txt, flush = True)
         
     epsilons = [0, 0.1, 0.01]
@@ -351,7 +390,7 @@ def figure_2_2(runs=2000, time=1000):
     
     # Run simulations, return best_action_counts and rewards. HH
     #???
-    best_action, rewards = simulate(runs, time, bandits)
+    best_action, rewards = simulate(runs, times, bandits)
     #???
 
     plt.figure(figsize=(10, 20))
@@ -363,7 +402,7 @@ def figure_2_2(runs=2000, time=1000):
     
     for eps, rew in zip(epsilons, rewards):
         h = plt.plot(rew[0], label = 'epsilon = %2g' %eps)
-        plt.fill_between(np.arange(0,time), rew[0] - rew[1], rew[0] + rew[1], alpha = 0.2, color = h[0].get_color())
+        plt.fill_between(np.arange(0,times), rew[0] - rew[1], rew[0] + rew[1], alpha = 0.2, color = h[0].get_color())
     #???
     
     plt.xlabel('steps')
@@ -376,7 +415,7 @@ def figure_2_2(runs=2000, time=1000):
     #???
     for eps, best_action in zip(epsilons, best_action):
         h = plt.plot(best_action[0], label = 'epsilonl = %2g' %eps)
-        plt.fill_between(np.arange(0,time), best_action[0] - best_action[1], \
+        plt.fill_between(np.arange(0,times), best_action[0] - best_action[1], \
                          best_action[0] + best_action[1], alpha = 0.2, color = h[0].get_color())
     
     #???    
@@ -390,9 +429,9 @@ def figure_2_2(runs=2000, time=1000):
 #    plt.close()
 
 
-def figure_2_3(runs=2000, time=1000):
+def figure_2_3(runs=global_runs, times=global_times):
     
-    title_txt = '=== Figure 2.3: Fixed step, Optimistic initial ==='
+    title_txt = '=== Figure 2.3: Fixed step \nOptimistic initial (%g runs) ===' % runs
     print(title_txt)
 
     # Compare optimistic intial value VS epsi-greedy
@@ -403,11 +442,13 @@ def figure_2_3(runs=2000, time=1000):
     bandits = [Bandit(epsilon = eps, initial = init, sample_averages = False)\
                for eps, init in zip(epsilons, q_inits)]
     
-    best_action, _ = simulate(runs, time, bandits)
-    
+    best_action, _ = simulate(runs, times, bandits)
+
+    plt.figure(figsize=(10, 10))
+   
     for eps, init, best_action in zip(epsilons, q_inits, best_action):
         h = plt.plot(best_action[0], label = 'epsilon = %2g, Q_init = %2g' % (eps, init))
-        plt.fill_between(np.arange(0,time), best_action[0] - best_action[1], best_action[0] + best_action[1], alpha = 0.2, color = h[0].get_color())
+        plt.fill_between(np.arange(0,times), best_action[0] - best_action[1], best_action[0] + best_action[1], alpha = 0.2, color = h[0].get_color())
 
     #???
     
@@ -420,9 +461,9 @@ def figure_2_3(runs=2000, time=1000):
 #    plt.close()
 
 
-def figure_2_4(runs=2000, time=1000):
+def figure_2_4(runs=global_runs, times=global_times):
 
-    title_txt = '=== Figure 2.4: Compare UCB and eps-greedy ==='
+    title_txt = '=== Figure 2.4: Compare UCB and eps-greedy (%g runs) ===' % runs
     print(title_txt)
 
     # Compare UCB VS epsi-greedy
@@ -431,13 +472,15 @@ def figure_2_4(runs=2000, time=1000):
     bandits.append(Bandit(epsilon=0, UCB_param=2, sample_averages=True))
     bandits.append(Bandit(epsilon=0.1, UCB_param=None, sample_averages=True))
     
-    _, aver_rewards = simulate(runs, time, bandits)
+    _, aver_rewards = simulate(runs, times, bandits)
     
     txt = ['epsi = 0,   UCB = 2', 'epsi = 0.1, UCB = 0']
     
+    plt.figure(figsize=(10, 10))    
+    
     for j, rew in enumerate(aver_rewards):
         h = plt.plot(rew[0], label = txt[j])
-        plt.fill_between(np.arange(0,time), rew[0] - rew[1], rew[0] + rew[1], alpha = 0.2, color = h[0].get_color())
+        plt.fill_between(np.arange(0,times), rew[0] - rew[1], rew[0] + rew[1], alpha = 0.2, color = h[0].get_color())
 
 
     #???
@@ -451,9 +494,9 @@ def figure_2_4(runs=2000, time=1000):
 #    plt.close()
 
 
-def figure_2_5(runs=2000, time=1000):
+def figure_2_5(runs=global_runs, times=global_times):
     
-    title_txt = '=== Figure 2.5: Stochastic Gradient Ascent ==='
+    title_txt = '=== Figure 2.5: Stochastic Gradient Ascent (%g runs) ===' % runs
     print(title_txt)
     
     # Compare gradient ascent bandits, 0.1 & 0.4 stepsize, w or w/o baseline
@@ -464,16 +507,18 @@ def figure_2_5(runs=2000, time=1000):
     bandits.append(Bandit(gradient=True, step_size=0.4, gradient_baseline=True, true_reward=4))
     bandits.append(Bandit(gradient=True, step_size=0.4, gradient_baseline=False, true_reward=4))
     
-    best_action_counts, _ = simulate(runs, time, bandits)
+    best_action_counts, _ = simulate(runs, times, bandits)
     
     labels = ['alpha = 0.1, with baseline',
               'alpha = 0.1, without baseline',
               'alpha = 0.4, with baseline',
               'alpha = 0.4, without baseline']
 
+    plt.figure(figsize=(10, 10))    
+    
     for i in range(len(bandits)):
         h = plt.plot(best_action_counts[i][0], label=labels[i])
-        plt.fill_between(np.arange(0,time), best_action_counts[i][0] - best_action_counts[i][1], \
+        plt.fill_between(np.arange(0,times), best_action_counts[i][0] - best_action_counts[i][1], \
                          best_action_counts[i][0] + best_action_counts[i][1], \
                          alpha = 0.2, color = h[0].get_color())
 
@@ -489,10 +534,10 @@ def figure_2_5(runs=2000, time=1000):
 #    plt.close()
 
 
-def figure_2_6(runs=2000, time=1000):
+def figure_2_6(runs=global_runs, times=global_times):
 
-    title_txt = '=== Figure 2.6: Parameter Scan ==='
-    print(title_txt)
+    title_txt = '=== Figure 2.6: Parameter Scan (%g runs) ===' % runs
+    print(title_txt, flush = True)
     labels = ['epsilon-greedy', 'gradient bandit',
               'UCB', 'optimistic initialization']
     
@@ -518,7 +563,7 @@ def figure_2_6(runs=2000, time=1000):
     
     # Run simulation. Get rewards.
     #???
-    _, aver_rewards = simulate(runs, time, bandits)
+    _, aver_rewards = simulate(runs, times, bandits)
     
     rewards_each_paras = np.mean(aver_rewards[:,0,:], axis=1)
     rewards_each_paras_sem = np.mean(aver_rewards[:,1,:], axis=1)
@@ -526,6 +571,7 @@ def figure_2_6(runs=2000, time=1000):
         
     # Plot curves. Use for loop
     #???
+    plt.figure(figsize=(10, 10))    
     i = 0
     for label, parameter in zip(labels, parameters):
         len_this = len(parameter)
@@ -543,13 +589,115 @@ def figure_2_6(runs=2000, time=1000):
     plt.savefig('figure_2_6.png')
 #    plt.close()
     
-def exercise_2_5():
+def exercise_2_5(runs=global_runs, times=10000):
+    '''    Design and conduct an experiment to demonstrate the
+    difficulties that sample-average methods have for nonstationary problems. Use a modified
+    version of the 10-armed testbed in which all the q⇤(a) start out equal and then take
+    independent random walks (say by adding a normally distributed increment with mean
+    zero and standard deviation 0.01 to all the q⇤(a) on each step). Prepare plots like
+    Figure 2.2 for an action-value method using sample averages, incrementally computed,
+    and another action-value method using a constant step-size parameter, step_size = 0.1. Use
+    epsilon = 0.1 and longer runs, say of 10,000 steps. ⇤
+    '''
+    title_txt = '=== Exercise 2.5: Nonstationary problem\nSample-average is bad (%g runs) === ' % runs
+    print(title_txt, flush = True)
+    
+    bandits = [Bandit(q_true_update = 'random_walk', sample_averages = True, epsilon = 0.1),
+               Bandit(q_true_update = 'random_walk', sample_averages = False, step_size = 0.1, epsilon = 0.1)]
+    labels = ['step_size = 1/N (sample-average)', 'step_size = 0.1']        
+    
+    best_action_counts_mean_sem, rewards_mean_sem = simulate(runs, times, bandits)
+    
+    plt.figure(figsize=(10,20))
+    plt.subplot(2,1,1)
+    for n,rew in enumerate(rewards_mean_sem):
+        h = plt.plot(rew[0], label = labels[n])
+        plt.fill_between(np.r_[0:times], rew[0] - rew[1], rew[0] + rew[1], color = h[0].get_color(), alpha = 0.2)
+ 
+    plt.title(title_txt)
+    plt.legend()
+    plt.xlabel('Time')
+    plt.ylabel('Average reward')
+    
+    plt.subplot(2,1,2)
+    for n,best in enumerate(best_action_counts_mean_sem):
+        h = plt.plot(best[0], label = labels[n])
+        plt.fill_between(np.r_[0:times], best[0] - best[1], best[0] + best[1], color = h[0].get_color(), alpha = 0.2)
+    
+    plt.xlabel('Time')
+    plt.ylabel('% Optimal action')
+
+    plt.legend()
+    plt.savefig('excercise_2_5.png', dpi=300)      
     
     return
         
-def exercise_2_11():
+def exercise_2_11(runs=global_runs, times=global_times):
+    '''
+    Make a figure analogous to Figure 2.6 for the nonstationary
+    case outlined in Exercise 2.5. Include the constant-step-size eps-greedy algorithm with eps
+    =0.1. Use runs of 200,000 steps and, as a performance measure for each algorithm and
+    parameter setting, use the average reward over the last 100,000 steps.
+    '''
+    
+    title_txt = '=== Exercise 2.11: Para scan for nonstat-problem\n(%g runs, %g steps) === ' % (runs,times)
+    print(title_txt, flush = True)
+    
+    labels = ['eps in "Sample-average + eps"', 'step_size in "Constant-step + eps0.1"',
+              'step_size in "gradient bandit"',
+              'c in "UCB"', 'Q0 in "optimistic initialization"']
+    
+    # Use lambda to define "superparameters" for a model
+    generators = [lambda epsilon: Bandit(q_true_update = 'random_walk',sample_averages=True, epsilon=epsilon), #???
+                  lambda step_size: Bandit(q_true_update = 'random_walk', epsilon=0.1, step_size=step_size),
+                  lambda alpha: Bandit(q_true_update = 'random_walk',gradient=True, step_size=alpha, gradient_baseline=True), #???
+                  lambda coef: Bandit(q_true_update = 'random_walk', UCB_param=coef, epsilon=0, sample_averages=True), #??? 
+                  lambda initial: Bandit(q_true_update = 'random_walk', initial=initial, epsilon=0, sample_averages=False, step_size=0.1) #???  
+                 ]
+    
+    parameters = [np.arange(-7, -1, dtype=np.float),
+                  np.arange(-4, 0, dtype=np.float),
+                  np.arange(-5, 2, dtype=np.float),
+                  np.arange(-4, 3, dtype=np.float),
+                  np.arange(-2, 3, dtype=np.float)]
+
+    # Generate bandits. Use zip
+    bandits = [] #???
+    #???
+    for generator, parameter in zip(generators, parameters):
+        for para in parameter:
+            bandits.append(generator(pow(2,para)))
+    #???
+    
+    # Run simulation. Get rewards.
+    #???
+    _, aver_rewards = simulate(runs, times, bandits)
+    
+    rewards_each_paras = np.mean(aver_rewards[:,0,times//2:], axis=1)   # Use the last half of time steps
+    rewards_each_paras_sem = np.mean(aver_rewards[:,1,times//2:], axis=1)
+    #???
         
+    # Plot curves. Use for loop
+    #???
+    plt.figure(figsize=(10, 10))    
+    i = 0
+    for label, parameter in zip(labels, parameters):
+        len_this = len(parameter)
+        # Open upper limit: [i, i+len_this) !!!
+        plt.errorbar(parameter, rewards_each_paras[i:i+len_this], rewards_each_paras_sem[i:i+len_this], label=label)
+        
+        i += len_this
+    #???
+    
+    plt.xlabel('Parameter(2^x)')
+    plt.ylabel('Average reward')
+    plt.legend()
+    plt.title(title_txt)
+
+    plt.savefig('exercise_2_11.png', dpi=300)
+    
     return
+
 
 
 if __name__ == '__main__':
@@ -560,14 +708,14 @@ if __name__ == '__main__':
     
     ''' Only map/imap can keep order!!! '''
     methods = [
-        'serial',
-        'ray',
-        'apply_async',
-        'map',
-        'imap',
+        # 'serial',
+        # 'ray',
+        'apply_async', # This is best till now!!!
+        # 'map',
+        # 'imap',    # This is the 2nd best. Faster than apply_async, has progress bar, but no more than 1 argument.
         ]
     
-    if 'ray' in methods:
+    if 'ray' in methods and platform.system() != 'Windows':
         ray.shutdown()
         ray.init(num_cpus = n_worker)
     
@@ -575,13 +723,13 @@ if __name__ == '__main__':
         pool = mp.Pool(processes = n_worker)
         
     
-    # figure_2_1
-    # figure_2_2(global_runs, global_times)
-    figure_2_3(global_runs, global_times)
-    # figure_2_4(global_runs,global_times)
-    # figure_2_5(global_runs,global_times)
-    # figure_2_6(global_runs, global_times)
+    # figure_2_1()
+    # figure_2_2()
+    # figure_2_3()
+    # figure_2_4()
+    # figure_2_5()
+    # figure_2_6()
     
-    exercise_2_5()
-    exercise_2_11()
+    # exercise_2_5(runs = 2000, times = 10000) # Long run for non-stationary
+    exercise_2_11(runs = 1000, times = 20000)
     
