@@ -12,12 +12,14 @@ Python replication for Sutton & Barto's book [*Reinforcement Learning: An Introd
 1. Tic-Tac-Toe
 
 ### Chapter 2
-1. [Figure 2.1: An exemplary bandit problem from the 10-armed testbed](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_2_1.png)
-2. [Figure 2.2: Average performance of epsilon-greedy action-value methods on the 10-armed testbed](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_2_2.png)
-3. [Figure 2.3: Optimistic initial action-value estimates](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_2_3.png)
-4. [Figure 2.4: Average performance of UCB action selection on the 10-armed testbed](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_2_4.png)
-5. [Figure 2.5: Average performance of the gradient bandit algorithm](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_2_5.png)
-6. [Figure 2.6: A parameter study of the various bandit algorithms](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_2_6.png)
+1. [Figure 2.1: An exemplary bandit problem from the 10-armed testbed](https://github.com/hanhou/RLAI/blob/master/chapter02/figure_2_1.png)
+2. [Figure 2.2: Average performance of epsilon-greedy action-value methods on the 10-armed testbed](https://github.com/hanhou/RLAI/blob/master/chapter02/figure_2_2.png)
+3. [Figure 2.3: Optimistic initial action-value estimates](https://github.com/hanhou/RLAI/blob/master/chapter02/figure_2_3.png)
+4. [Figure 2.4: Average performance of UCB action selection on the 10-armed testbed](https://github.com/hanhou/RLAI/blob/master/chapter02/figure_2_4.png)
+5. [Figure 2.5: Average performance of the gradient bandit algorithm](https://github.com/hanhou/RLAI/blob/master/chapter02/figure_2_5.png)
+6. [Figure 2.6: A parameter study of the various bandit algorithms](https://github.com/hanhou/RLAI/blob/master/chapter02/figure_2_6.png)
+7. [Exercise 2.5: Sample-average is bad for non-stationary problem](https://github.com/hanhou/RLAI/blob/master/chapter02/exercise_2_5.png)
+8. [Exercise 2.11: A parameter study for non-stationary problem](https://github.com/hanhou/RLAI/blob/master/chapter02/exercise_2_11.png)
 
 ### Chapter 3
 1. [Figure 3.2: Grid example with random policy](https://raw.githubusercontent.com/ShangtongZhang/reinforcement-learning-an-introduction/master/images/figure_3_2.png)
