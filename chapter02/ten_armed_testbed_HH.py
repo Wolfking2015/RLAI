@@ -628,7 +628,7 @@ def exercise_2_5(runs=global_runs, times=10000):
     plt.ylabel('% Optimal action')
 
     plt.legend()
-    plt.savefig('excercise_2_5.png', dpi=300)      
+    plt.savefig('exercise_2_5.png', dpi=300)      
     
     return
         
