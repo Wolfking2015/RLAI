@@ -603,8 +603,13 @@ def exercise_2_5(runs=global_runs, times=10000):
     print(title_txt, flush = True)
     
     bandits = [Bandit(q_true_update = 'random_walk', sample_averages = True, epsilon = 0.1),
-               Bandit(q_true_update = 'random_walk', sample_averages = False, step_size = 0.1, epsilon = 0.1)]
+                Bandit(q_true_update = 'random_walk', sample_averages = False, step_size = 0.1, epsilon = 0.1)]
     labels = ['step_size = 1/N (sample-average)', 'step_size = 0.1']        
+    
+    # Test UCB, c=4, temporarily
+    # bandits = [Bandit(q_true_update = 'random_walk', sample_averages = True, UCB_param = 4, epsilon = 0),
+    #            Bandit(q_true_update = 'random_walk', sample_averages = False, step_size = 0.1, epsilon = 0.1)]
+    # labels = ['sample_average + UCB, c = 4', 'step_size = 0.1, eps = 0.1']        
     
     best_action_counts_mean_sem, rewards_mean_sem = simulate(runs, times, bandits)
     
@@ -628,7 +633,9 @@ def exercise_2_5(runs=global_runs, times=10000):
     plt.ylabel('% Optimal action')
 
     plt.legend()
+    
     plt.savefig('exercise_2_5.png', dpi=300)      
+    # plt.savefig('exercise_2_11_testUCB4.png', dpi=300)      
     
     return
         
@@ -730,6 +737,6 @@ if __name__ == '__main__':
     # figure_2_5()
     # figure_2_6()
     
-    # exercise_2_5(runs = 2000, times = 10000) # Long run for non-stationary
-    exercise_2_11(runs = 1000, times = 20000)
+    exercise_2_5(runs = 1000, times = 20000) # Long run for non-stationary
+    # exercise_2_11(runs = 1000, times = 20000)
     
