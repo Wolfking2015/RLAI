@@ -710,7 +710,7 @@ def exercise_2_11(runs=global_runs, times=global_times):
 if __name__ == '__main__':
     
  
-    n_worker = mp.cpu_count()
+    n_worker = int(mp.cpu_count()/2)
     
     
     ''' Only map/imap can keep order!!! '''
